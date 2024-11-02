@@ -224,6 +224,10 @@ def difference_distribution_table(sbox: SBox) -> list[list[int]]:
                 if sbox.encrypt(i) ^ sbox.encrypt(i ^ x) == y:
                     count += 1
             table[x][y] = count
+
+    with open("difference_distribution_table.txt", "w") as f:
+        for row in table:
+            f.write("\t".join(map(str, row)) + "\n")
     return table
 
 

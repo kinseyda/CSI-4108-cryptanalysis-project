@@ -1,6 +1,5 @@
 secret*
-#javaFiles/
-DifferentialCryptanalysis*
+*.txt
 
 # Default python gitignore:
 
