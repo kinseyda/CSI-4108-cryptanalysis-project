@@ -37,7 +37,7 @@ sbox = SBox(
 diff_table = difference_distribution_table(sbox)
 print(f"Difference Distribution Table for S-Box ({sbox}):")
 print(pretty_string_diff_table(diff_table))
-print(f"Best difference characteristic: {best_difference_characteristic(sbox, 4)}")
+print(f"Best difference characteristic: {best_difference_characteristic_path(sbox, 3)}")
 
 key_1, key_2, key_3, key_4, key_5 = generate_round_keys()
 

@@ -9,7 +9,9 @@ class Block:
         self.block = block
 
     def get_bit(self, index: int) -> int:
-        return (self.block[index // 4] >> (index % 4)) & 1
+        # Treats the four 4-bit numbers as a single 16-bit number and returns
+        # the bit at the given index
+        return (self.block[index // 4] >> (3 - (index % 4))) & 1
 
     def __iter__(self):
         # Iterate over 4-bit numbers / hexadecimal characters, not bits
@@ -20,10 +22,29 @@ class Block:
 
 
 def bits_to_block(
-    bits: tuple[
-        int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int
-    ]
+    bits: (
+        tuple[
+            int,
+            int,
+            int,
+            int,
+            int,
+            int,
+            int,
+            int,
+            int,
+            int,
+            int,
+            int,
+            int,
+            int,
+            int,
+            int,
+        ]
+        | tuple[int, ...]
+    )
 ) -> Block:
+    assert len(bits) == 16
     ints = []
     for i in range(0, 16, 4):
         ints.append(bits[i] * 8 + bits[i + 1] * 4 + bits[i + 2] * 2 + bits[i + 3] * 1)
@@ -74,22 +95,26 @@ class SBox:
             block.append(self.encrypt(num))
         return Block(tuple(block))
 
+    def decrypt_block(self, cypherblock: Block) -> Block:
+        # Decrypt four 4-bit numbers at once
+        block = []
+        for num in cypherblock:
+            block.append(self.decrypt(num))
+        return Block(tuple(block))
+
     def __str__(self) -> str:
         return " ".join([hex(i)[2:] for i in self.keys])
 
 
 def _permute_index(index: int) -> int:
-    # Simple shift permutation
-    # 1 -> 1, 5 -> 2, 9 -> 3, 13 -> 4, 2 -> 5, etc
+    # Simple bitwise shift permutation.
+    #  0 -> 0, 1 -> 4,  2 -> 8,  3 -> 12, 4 -> 1, 5 -> 5,  6 -> 9,  7 -> 13, etc
     # Use this to permute the plaintext
     return (index % 4) * 4 + (index // 4)
 
 
 def permute_block(block: Block) -> Block:
-    permuted_bits = []
-    for i in range(16):
-        permuted_bits.append(block.get_bit(_permute_index(i)))
-    return bits_to_block(tuple(permuted_bits))
+    return bits_to_block(tuple([block.get_bit(_permute_index(i)) for i in range(16)]))
 
 
 class SPN:
@@ -101,32 +126,60 @@ class SPN:
         self.round_keys = round_keys
 
     def _cipher_round(
-        self, plain_num: Block, round_key: Block, do_permute=True
+        self, num: Block, round_key: Block, forwards: bool, do_permute=True
     ) -> Block:
-        # 1. Substitution
-        # 2. Permutation
-        # 3. Key mixing
-        result = plain_num
-        # Substitution
-        result = self.sbox.encrypt_block(result)
-        # Permuation
-        if do_permute:
-            result = permute_block(result)
-        # Key mixing
-        result = mix_blocks(result, round_key)
+        result = num
+
+        def _key_mixing(block: Block, key: Block) -> Block:
+            return mix_blocks(block, key)
+
+        def _substitution(block: Block, _: Block) -> Block:
+            if forwards:
+                return self.sbox.encrypt_block(block)
+            else:
+                return self.sbox.decrypt_block(block)
+
+        def _permutation(block: Block, _: Block) -> Block:
+            if do_permute:
+                return permute_block(block)
+            return block
+
+        funcs = [_key_mixing, _substitution, _permutation]
+        if not forwards:
+            funcs = reversed(funcs)
+
+        for func in funcs:
+            result = func(result, round_key)
+
         return result
 
     def encrypt_block(self, plaintext: Block) -> Block:
         # 4 rounds of SPN
         result = plaintext
-        for i in range(4):
-            result = self._cipher_round(result, self.round_keys[i])
+        for i in range(3):
+            result = self._cipher_round(result, self.round_keys[i], True)
         # Final round without permutation
-        result = self._cipher_round(result, self.round_keys[4], do_permute=False)
+        result = self._cipher_round(result, self.round_keys[3], True, False)
+        # Final key mixing
+        result = mix_blocks(result, self.round_keys[4])
         return result
 
     def encrypt(self, plaintext: list[Block]) -> list[Block]:
         return [self.encrypt_block(p) for p in plaintext]
+
+    def decrypt_block(self, cyphertext: Block) -> Block:
+        # 4 rounds of SPN
+        result = cyphertext
+        # Final key mixing
+        result = mix_blocks(result, self.round_keys[4])
+        # Final round without permutation
+        result = self._cipher_round(result, self.round_keys[3], False, False)
+        for i in range(2, -1, -1):
+            result = self._cipher_round(result, self.round_keys[i], False)
+        return result
+
+    def decrypt(self, cyphertext: list[Block]) -> list[Block]:
+        return [self.decrypt_block(c) for c in cyphertext]
 
 
 def random_4_bit() -> int:
@@ -174,9 +227,7 @@ def difference_distribution_table(sbox: SBox) -> list[list[int]]:
     return table
 
 
-def best_difference_characteristic(
-    sbox: SBox, rounds: int
-) -> tuple[tuple[int, int, float], ...]:
+def best_difference_characteristic_path(sbox: SBox, rounds: int):
     # Finds the best difference characteristic for the SBox (assumes the same
     # sbox for each round). A difference characteristic is "a sequence of input
     # and output differences to the rounds so that the output difference from
