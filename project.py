@@ -55,5 +55,6 @@ print(f"Ciphertext: {ciphertext[0]}")
 print(f"Decrypted: {spn.decrypt(ciphertext)[0]}")
 
 write_secret_file("keys.txt", f"{key_1}\n{key_2}\n{key_3}\n{key_4}\n{key_5}")
-write_secret_file("plaintexts.txt", "\n".join([str(p) for p in generate_plaintexts()]))
+write_secret_file("plaintexts.txt", "\n".join([str(p) for p in plaintext]))
 write_secret_file("ciphertexts.txt", "\n".join([str(c) for c in ciphertext]))
+
