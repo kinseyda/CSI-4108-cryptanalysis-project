@@ -15,22 +15,22 @@ from helpers import *
 
 sbox = SBox(
     [
-        0x0,
-        0xF,
-        0x7,
-        0x4,
-        0xD,
-        0x2,
-        0xC,
-        0x1,
-        0xA,
-        0x6,
-        0xC,
-        0xB,
-        0x9,
-        0x5,
-        0x3,
-        0x8,
+        0,
+        15,
+        7,
+        4,
+        14,
+        2,
+        13,
+        1,
+        10,
+        6,
+        12,
+        11,
+        9,
+        5,
+        3,
+        8,
     ]
 )
 # This is the second DES S-Box
@@ -48,6 +48,11 @@ spn = SPN(sbox, (key_1, key_2, key_3, key_4, key_5))
 
 plaintext = generate_plaintexts()
 ciphertext = spn.encrypt(plaintext)
+
+print("Test encryption / decryption:")
+print(f"Plaintext: {plaintext[0]}")
+print(f"Ciphertext: {ciphertext[0]}")
+print(f"Decrypted: {spn.decrypt(ciphertext)[0]}")
 
 write_secret_file("keys.txt", f"{key_1}\n{key_2}\n{key_3}\n{key_4}\n{key_5}")
 write_secret_file("plaintexts.txt", "\n".join([str(p) for p in generate_plaintexts()]))

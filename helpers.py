@@ -248,3 +248,12 @@ def pretty_string_diff_table(diff_table: list[list[int]]) -> str:
     for row in diff_table:
         s += " ".join([hex(i)[2:] for i in row]) + "\n"
     return s
+
+
+def load_blocks(filename: str) -> list[Block]:
+    # Assumes the file is a newline separated list of four 4-bit numbers each - one block per line.
+    l = []
+    with open(filename, "r") as f:
+        for line in f:
+            l.append(Block(tuple([int(c, 16) for c in line.strip().split()[0]])))
+    return l
