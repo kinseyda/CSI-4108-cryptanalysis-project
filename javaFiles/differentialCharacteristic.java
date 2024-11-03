@@ -4,38 +4,46 @@ import java.io.IOException;
 public class differentialCharacteristic {
  
     public static void main(String[] args) {
-
-        int[][] table = getDifferenceDistributionTable();
-        int[][] estimatedValue = biggestTableValue(table);
-        String binairyValue = "0000101100000000"; 
+ 
+        int[][] estimatedValue = biggestTableValue(getDifferenceDistributionTable());
         String keyChance = "";
-
+        String binairyValue = "0000101100000000"; // Default value
+        if (args.length > 0) {
+            binairyValue = args[0]; // Use the provided binary value
+        }
+        System.out.println("Input binary value: " + binairyValue);
+         
+        //Round 1
         String[] hexValue = convertHexStringToArray(binairyValue);
         String[] returnedValue = sBox(hexValue, estimatedValue, keyChance);
         String newInput = formatHexString(returnedValue[0]);
-        keyChance = (returnedValue[1]);
+        keyChance = returnedValue[1];
         String[][] tempArray = permute(newInput); 
-        
-        //now that permutation is finished, how to get next box value
-        // in thenotes we go from from ∆X = B to ∆Y = 2
-        // my guess is that you then check the DifferenceDistributionTable for which value is the most likely
         binairyValue = appendArrayItems(tempArray);
          
-
-        hexValue = convertHexStringToArray(binairyValue);
-        //System.out.println("test "+formatHexString(hexValue));
+        //Round 2
+        hexValue = convertHexStringToArray(binairyValue); 
         returnedValue = sBox(hexValue, estimatedValue, keyChance);
         newInput = formatHexString(returnedValue[0]);
-        keyChance = (returnedValue[1]);
+        keyChance = returnedValue[1];
         tempArray = permute(newInput); 
         binairyValue = appendArrayItems(tempArray); 
 
+        //Round 3
         hexValue = convertHexStringToArray(binairyValue);
         returnedValue = sBox(hexValue, estimatedValue, keyChance);
         newInput = formatHexString(returnedValue[0]);
-        keyChance = (returnedValue[1]);
-        //System.out.println(newInput);
+        keyChance = returnedValue[1]; 
 
+        //Finished product
+        
+        tempArray = permute(newInput); 
+        binairyValue = appendArrayItems(tempArray);
+        newInput = formatHexString(binairyValue);
+        System.out.println();
+        System.out.println("Output binary value: " + newInput);
+
+        // This part of the code is used to calculate the probability of the difference pair
         String[] numbers = keyChance.split("\\+");
         double result = 1.0;
 
@@ -137,7 +145,7 @@ public class differentialCharacteristic {
             
             String group = hex.substring(i, Math.min(i + 4, hex.length()));
             hexArray[i / 4] = group; // Store it in the array
-            System.out.println(hexArray[i/4]);
+            //System.out.println(hexArray[i/4]);
         }
 
         return hexArray;
