@@ -15,24 +15,27 @@ from helpers import *
 
 sbox = SBox(
     [
-        0xE,
+        0x0,
+        0xF,
+        0x7,
         0x4,
         0xD,
-        0x1,
         0x2,
-        0xF,
-        0xB,
-        0x8,
-        0x3,
+        0xC,
+        0x1,
         0xA,
         0x6,
         0xC,
-        0x5,
+        0xB,
         0x9,
-        0x0,
-        0x7,
-    ]  # DES S-Box, from table 1 of Heys' paper. Just for testing, randomize this before the project.
+        0x5,
+        0x3,
+        0x8,
+    ]
 )
+# This is the second DES S-Box
+# https://en.wikipedia.org/wiki/DES_supplementary_material#Substitution_boxes_(S-boxes)
+
 
 diff_table = difference_distribution_table(sbox)
 print(f"Difference Distribution Table for S-Box ({sbox}):")
