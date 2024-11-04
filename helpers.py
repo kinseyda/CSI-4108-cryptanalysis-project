@@ -231,17 +231,6 @@ def difference_distribution_table(sbox: SBox) -> list[list[int]]:
     return table
 
 
-def best_difference_characteristic_path(sbox: SBox, rounds: int):
-    # Finds the best difference characteristic for the SBox (assumes the same
-    # sbox for each round). A difference characteristic is "a sequence of input
-    # and output differences to the rounds so that the output difference from
-    # one round corresponds to the input difference for the next round."
-    # Returns a tuple of `rounds` tuples (input difference, output difference, probability)
-
-    # TODO May want to change method signature? idk
-    return ((0, 0, 0.0),)
-
-
 def pretty_string_diff_table(diff_table: list[list[int]]) -> str:
     # Pretty print the difference distribution table
     s = ""
@@ -257,3 +246,59 @@ def load_blocks(filename: str) -> list[Block]:
         for line in f:
             l.append(Block(tuple([int(c, 16) for c in line.strip().split()[0]])))
     return l
+
+
+def biggest_in_rows(table: list[list[int]]) -> list[tuple[int, int]]:
+    # Find the biggest value and the [first] index it occurs in each row
+    return [(max(row), row.index(max(row))) for row in table]
+
+
+def differential_characteristic_path(
+    sbox: SBox, p: Block, rounds: int
+) -> tuple[list[list[tuple[int, int]]], float]:
+    """
+    Finds the best diffierential characteristic path for a given plaintext
+    difference block p (\Delta P).
+
+    Returns a 2d list of tuples, where each tuple is a pair of input and output
+    differences for a round. As in, the top left tuple in the matrix is the
+    input and output differences for the first sbox in the first round
+    """
+
+    # Step 1: Compute the difference distribution table for the S-Box
+    diff_table = difference_distribution_table(sbox)
+
+    # Step 2: Compute the best difference characteristic for the S-Box
+    # Find the best output difference for each input difference
+    best_diffs = biggest_in_rows(diff_table)
+
+    path_matrix: list[list[tuple[int, int]]] = []
+    cur = Block(p.block)
+    result_probability = 1
+    # For each round
+    for round in range(rounds):
+        path_matrix.append([])
+        newCur = []
+        for sbox_index in range(4):
+            # For each sbox in the round, find the best input/output difference pair
+            # for the sbox
+            input_nibble = cur.block[sbox_index]
+            output_nibble = best_diffs[input_nibble][1]
+            path_matrix[round].append((input_nibble, output_nibble))
+            newCur.append(output_nibble)
+            if input_nibble != 0 and output_nibble != 0:
+                # Update the probability of the path
+                result_probability *= diff_table[input_nibble][output_nibble] / 16
+
+        # Update the current block to the output of the round, then permute it
+        cur = Block(tuple(newCur))
+        cur = permute_block(cur)
+
+    return path_matrix, result_probability
+
+
+def pretty_string_diff_characteristic_path(path: list[list[tuple[int, int]]]) -> str:
+    s = ""
+    for row in path:
+        s += "  ".join([f"{hex(i[0])[2:]}->{hex(i[1])[2:]}" for i in row]) + "\n"
+    return s
