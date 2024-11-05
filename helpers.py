@@ -1,4 +1,5 @@
 import random
+from typing import Iterator
 
 
 class Block:
@@ -7,6 +8,13 @@ class Block:
     def __init__(self, block: tuple[int, ...]):
         assert len(block) == 4
         self.block = block
+
+    def as_binary(self) -> tuple[int, ...]:
+        # Convert the 16-bit number to a tuple of 16 bits
+        return tuple([(self.block[i // 4] >> (3 - (i % 4))) & 1 for i in range(16)])
+
+    def as_int(self) -> int:
+        return int(str(self), 16)
 
     def get_bit(self, index: int) -> int:
         # Treats the four 4-bit numbers as a single 16-bit number and returns
@@ -17,8 +25,55 @@ class Block:
         # Iterate over 4-bit numbers / hexadecimal characters, not bits
         return iter(self.block)
 
+    def __getitem__(self, index: int) -> int:
+        # Get the 4-bit number at the given index, not the bit
+        return self.block[index]
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Block):
+            return False
+        return (
+            self.block[0] == other.block[0]
+            and self.block[1] == other.block[1]
+            and self.block[2] == other.block[2]
+            and self.block[3] == other.block[3]
+        )
+
+    def __or__(self, other: "Block") -> "Block":
+        return Block(tuple([a | b for a, b in zip(self.block, other.block)]))
+
+    def __and__(self, other: "Block") -> "Block":
+        return Block(tuple([a & b for a, b in zip(self.block, other.block)]))
+
+    def __xor__(self, other: "Block") -> "Block":
+        return Block(tuple([a ^ b for a, b in zip(self.block, other.block)]))
+
     def __str__(self) -> str:
         return "".join([hex(i)[2:] for i in self.block])
+
+    def __lt__(self, other: "Block") -> bool:
+        return self.as_int() < other.as_int()
+
+    def __gt__(self, other: "Block") -> bool:
+        return self.as_int() > other.as_int()
+
+    def __le__(self, other: "Block") -> bool:
+        return self.as_int() <= other.as_int()
+
+    def __ge__(self, other: "Block") -> bool:
+        return self.as_int() >= other.as_int()
+
+    def __ne__(self, other: "Block") -> bool:
+        return self.as_int() != other.as_int()
+
+    def __sub__(self, other: "Block") -> "Block":
+        return Block(tuple([(a - b) % 0xF for a, b in zip(self.block, other.block)]))
+
+    def __add__(self, other: "Block") -> "Block":
+        return Block(tuple([(a + b) % 0xF for a, b in zip(self.block, other.block)]))
+
+    def __hash__(self) -> int:
+        return hash(self.as_int())
 
 
 def bits_to_block(
@@ -198,11 +253,24 @@ def generate_round_keys() -> tuple[Block, Block, Block, Block, Block]:
     return tuple(keys)
 
 
-def generate_plaintexts() -> list[Block]:
+def generate_plaintexts(n: int = 10000) -> list[Block]:
     # Generate 10,000 16-bit plaintexts
     plaintexts = []
-    for i in range(10000):
+    for i in range(n):
         plaintexts.append(random_block())
+    return plaintexts
+
+
+def generate_diffed_plaintexts(diff: Block, n: int = 10000) -> list[Block]:
+    assert n % 2 == 0
+
+    plaintexts = []
+    for i in range(n // 2):
+        b = random_block()
+        b_prime = mix_blocks(b, diff)
+        plaintexts.append(b)
+        plaintexts.append(b_prime)
+
     return plaintexts
 
 
@@ -254,7 +322,7 @@ def biggest_in_rows(table: list[list[int]]) -> list[tuple[int, int]]:
 
 
 def differential_characteristic_path(
-    sbox: SBox, p: Block, rounds: int
+    diff_table: list[list[int]], p: Block, rounds: int
 ) -> tuple[list[list[tuple[int, int]]], float]:
     """
     Finds the best diffierential characteristic path for a given plaintext
@@ -265,10 +333,6 @@ def differential_characteristic_path(
     input and output differences for the first sbox in the first round
     """
 
-    # Step 1: Compute the difference distribution table for the S-Box
-    diff_table = difference_distribution_table(sbox)
-
-    # Step 2: Compute the best difference characteristic for the S-Box
     # Find the best output difference for each input difference
     best_diffs = biggest_in_rows(diff_table)
 
@@ -295,6 +359,48 @@ def differential_characteristic_path(
         cur = permute_block(cur)
 
     return path_matrix, result_probability
+
+
+def all_possible_blocks() -> Iterator[Block]:
+    n = 0
+    for i in range(16):
+        for j in range(16):
+            for k in range(16):
+                for l in range(16):
+                    yield Block((i, j, k, l))
+                    n += 1
+
+
+def best_differential_characteristic(
+    diff_table: list[list[int]],
+    rounds: int,
+    epsilon: float = 0.0005,
+) -> tuple[Block, Block, Block, list[list[tuple[int, int]]], float] | None:
+    """
+    Find the best differential characteristic for the given difference
+    distribution table and number of rounds. Returns a tuple, where the tuple is
+    an input diff block, an input diff to the final round, an overall output
+    diff block, a matrix of tuples representing the path, and the probability of
+    the characteristic.
+    """
+    count = 0
+    total = 16**4
+    best_probability = 0
+    best_ret = None
+    for i in all_possible_blocks():
+        count += 1
+        if i == Block((0, 0, 0, 0)):
+            continue
+        path, probability = differential_characteristic_path(diff_table, i, rounds)
+        if probability <= epsilon:
+            # Dont bother with these, we likely wont find a good pair in the collected plaintexts
+            continue
+        output_block = Block(tuple([path[-1][i][1] for i in range(4)]))
+        if probability > best_probability:
+            best_probability = probability
+            final_round_input_diff = Block(tuple([path[-1][i][0] for i in range(4)]))
+            best_ret = (i, final_round_input_diff, output_block, path, probability)
+    return best_ret
 
 
 def pretty_string_diff_characteristic_path(path: list[list[tuple[int, int]]]) -> str:
