@@ -1,4 +1,5 @@
 import random
+from typing import Any, Callable, Iterator
 
 
 class Block:
@@ -7,6 +8,13 @@ class Block:
     def __init__(self, block: tuple[int, ...]):
         assert len(block) == 4
         self.block = block
+
+    def as_binary(self) -> tuple[int, ...]:
+        # Convert the 16-bit number to a tuple of 16 bits
+        return tuple([(self.block[i // 4] >> (3 - (i % 4))) & 1 for i in range(16)])
+
+    def as_int(self) -> int:
+        return int(str(self), 16)
 
     def get_bit(self, index: int) -> int:
         # Treats the four 4-bit numbers as a single 16-bit number and returns
@@ -17,8 +25,55 @@ class Block:
         # Iterate over 4-bit numbers / hexadecimal characters, not bits
         return iter(self.block)
 
+    def __getitem__(self, index: int) -> int:
+        # Get the 4-bit number at the given index, not the bit
+        return self.block[index]
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Block):
+            return False
+        return (
+            self.block[0] == other.block[0]
+            and self.block[1] == other.block[1]
+            and self.block[2] == other.block[2]
+            and self.block[3] == other.block[3]
+        )
+
+    def __or__(self, other: "Block") -> "Block":
+        return Block(tuple([a | b for a, b in zip(self.block, other.block)]))
+
+    def __and__(self, other: "Block") -> "Block":
+        return Block(tuple([a & b for a, b in zip(self.block, other.block)]))
+
+    def __xor__(self, other: "Block") -> "Block":
+        return Block(tuple([a ^ b for a, b in zip(self.block, other.block)]))
+
     def __str__(self) -> str:
         return "".join([hex(i)[2:] for i in self.block])
+
+    def __lt__(self, other: "Block") -> bool:
+        return self.as_int() < other.as_int()
+
+    def __gt__(self, other: "Block") -> bool:
+        return self.as_int() > other.as_int()
+
+    def __le__(self, other: "Block") -> bool:
+        return self.as_int() <= other.as_int()
+
+    def __ge__(self, other: "Block") -> bool:
+        return self.as_int() >= other.as_int()
+
+    def __ne__(self, other: "Block") -> bool:
+        return self.as_int() != other.as_int()
+
+    def __sub__(self, other: "Block") -> "Block":
+        return Block(tuple([(a - b) % 0xF for a, b in zip(self.block, other.block)]))
+
+    def __add__(self, other: "Block") -> "Block":
+        return Block(tuple([(a + b) % 0xF for a, b in zip(self.block, other.block)]))
+
+    def __hash__(self) -> int:
+        return hash(self.as_int())
 
 
 def bits_to_block(
@@ -51,10 +106,6 @@ def bits_to_block(
     return Block(tuple(ints))
 
 
-def mix_blocks(block1: Block, block2: Block) -> Block:
-    return Block(tuple([a ^ b for a, b in zip(block1, block2)]))
-
-
 class SBox:
     keys = [
         0x0,
@@ -78,9 +129,6 @@ class SBox:
     def __init__(self, keys: list | None = None):
         if keys is not None:
             self.keys = keys
-
-    def shuffle(self):
-        random.shuffle(self.keys)
 
     def encrypt(self, plainnum: int) -> int:
         return self.keys[plainnum]
@@ -131,7 +179,7 @@ class SPN:
         result = num
 
         def _key_mixing(block: Block, key: Block) -> Block:
-            return mix_blocks(block, key)
+            return block ^ key
 
         def _substitution(block: Block, _: Block) -> Block:
             if forwards:
@@ -161,7 +209,7 @@ class SPN:
         # Final round without permutation
         result = self._cipher_round(result, self.round_keys[3], True, False)
         # Final key mixing
-        result = mix_blocks(result, self.round_keys[4])
+        result = result ^ self.round_keys[4]
         return result
 
     def encrypt(self, plaintext: list[Block]) -> list[Block]:
@@ -171,7 +219,7 @@ class SPN:
         # 4 rounds of SPN
         result = cyphertext
         # Final key mixing
-        result = mix_blocks(result, self.round_keys[4])
+        result = result ^ self.round_keys[4]
         # Final round without permutation
         result = self._cipher_round(result, self.round_keys[3], False, False)
         for i in range(2, -1, -1):
@@ -254,7 +302,7 @@ def biggest_in_rows(table: list[list[int]]) -> list[tuple[int, int]]:
 
 
 def differential_characteristic_path(
-    sbox: SBox, p: Block, rounds: int
+    diff_table: list[list[int]], p: Block, rounds: int
 ) -> tuple[list[list[tuple[int, int]]], float]:
     """
     Finds the best diffierential characteristic path for a given plaintext
@@ -265,10 +313,6 @@ def differential_characteristic_path(
     input and output differences for the first sbox in the first round
     """
 
-    # Step 1: Compute the difference distribution table for the S-Box
-    diff_table = difference_distribution_table(sbox)
-
-    # Step 2: Compute the best difference characteristic for the S-Box
     # Find the best output difference for each input difference
     best_diffs = biggest_in_rows(diff_table)
 
@@ -297,8 +341,108 @@ def differential_characteristic_path(
     return path_matrix, result_probability
 
 
+def best_differential_characteristic(
+    diff_table: list[list[int]],
+    rounds: int,
+    plaintexts: list[Block],
+    cyphertexts: list[Block],
+    epsilon: float = 0.0005,
+) -> tuple[Block, Block, Block, list[list[tuple[int, int]]], float] | None:
+    """
+    Find the best differential characteristic for the given SBox and number of
+    rounds for which a good pair exists. Returns a tuple, where the tuple is an
+    input diff block, an input diff to the final round, an overall output diff
+    block, a matrix of tuples representing the path, and the probability of the
+    characteristic.
+    """
+    count = 0
+    total = 16**4
+    best_probability = 0
+    best_ret = None
+    for i in all_possible_blocks():
+        count += 1
+        if i == Block((0, 0, 0, 0)):
+            continue
+        path, probability = differential_characteristic_path(diff_table, i, rounds)
+        if probability <= epsilon:
+            # Dont bother with these, we likely wont find a good pair in the collected plaintexts
+            continue
+        output_block = Block(tuple([path[-1][i][1] for i in range(4)]))
+        good_pair = find_good_pair(i, output_block, plaintexts, cyphertexts)
+        if good_pair is not None:
+            if probability > best_probability:
+                best_probability = probability
+                final_round_input_diff = Block(
+                    tuple([path[-1][i][0] for i in range(4)])
+                )
+                best_ret = (i, final_round_input_diff, output_block, path, probability)
+    return best_ret
+
+
 def pretty_string_diff_characteristic_path(path: list[list[tuple[int, int]]]) -> str:
     s = ""
     for row in path:
         s += "  ".join([f"{hex(i[0])[2:]}->{hex(i[1])[2:]}" for i in row]) + "\n"
     return s
+
+
+def all_possible_blocks() -> Iterator[Block]:
+    n = 0
+    for i in range(16):
+        for j in range(16):
+            for k in range(16):
+                for l in range(16):
+                    yield Block((i, j, k, l))
+                    n += 1
+
+
+def find_difference(
+    diff: Block, list_a: list[Block], list_b: list[Block]
+) -> list[tuple[Block, Block]]:
+    """
+    Find the pairs in list_a and list_b that have a difference of diff
+    """
+    result = []
+    for i in range(min(len(list_a), len(list_b))):
+        if list_a[i] ^ list_b[i] == diff:
+            result.append((list_a[i], list_b[i]))
+    return result
+
+
+def find_good_pair(
+    input_diff: Block,
+    expected_out: Block,
+    plaintexts: list[Block],
+    cyphertexts: list[Block],
+) -> tuple[tuple[Block, Block], tuple[Block, Block]] | None:
+    # Find a pair of plaintexts that have the given input difference and output
+    # difference when encrypted
+
+    plaintext_dict = {p: c for p, c in zip(plaintexts, cyphertexts)}
+
+    for i, (p0, c0) in enumerate(plaintext_dict.items()):
+        p1_expected = p0 ^ input_diff
+        if p1_expected in plaintext_dict:
+            c1 = plaintext_dict[p1_expected]
+            if c0 ^ c1 == expected_out:
+                return (p0, c0), (p1_expected, c1)
+
+
+def find_all_good_pairs(
+    input_diff: Block,
+    expected_out: Block,
+    plaintexts: list[Block],
+    cyphertexts: list[Block],
+) -> list[tuple[tuple[Block, Block], tuple[Block, Block]]]:
+    # Find a pair of plaintexts that have the given input difference and output
+    # difference when encrypted
+
+    plaintext_dict = {p: c for p, c in zip(plaintexts, cyphertexts)}
+    results = []
+    for i, (p0, c0) in enumerate(plaintext_dict.items()):
+        p1_expected = p0 ^ input_diff
+        if p1_expected in plaintext_dict:
+            c1 = plaintext_dict[p1_expected]
+            if c0 ^ c1 == expected_out:
+                results.append(((p0, c0), (p1_expected, c1)))
+    return results
