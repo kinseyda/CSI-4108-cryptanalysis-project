@@ -173,6 +173,9 @@ class SPN:
         self.sbox = sbox
         self.round_keys = round_keys
 
+    def __str__(self) -> str:
+        return f"SPN with SBox: {self.sbox} and round keys: {list(map(str, self.round_keys))}"
+
     def _cipher_round(
         self, num: Block, round_key: Block, forwards: bool, do_permute=True
     ) -> Block:
@@ -246,11 +249,24 @@ def generate_round_keys() -> tuple[Block, Block, Block, Block, Block]:
     return tuple(keys)
 
 
-def generate_plaintexts() -> list[Block]:
+def generate_plaintexts(n: int = 10000) -> list[Block]:
     # Generate 10,000 16-bit plaintexts
     plaintexts = []
-    for i in range(10000):
+    for i in range(n):
         plaintexts.append(random_block())
+    return plaintexts
+
+
+def generate_diffed_plaintexts(diff: Block, n: int = 10000) -> list[Block]:
+    assert n % 2 == 0
+
+    plaintexts = []
+    for i in range(n // 2):
+        b = random_block()
+        b_prime = b ^ diff
+        plaintexts.append(b)
+        plaintexts.append(b_prime)
+
     return plaintexts
 
 
@@ -301,9 +317,22 @@ def biggest_in_rows(table: list[list[int]]) -> list[tuple[int, int]]:
     return [(max(row), row.index(max(row))) for row in table]
 
 
+def coordinate_of_max(table: list[list[int]], lt: int) -> tuple[int, int]:
+    # Find the coordinate of the maximum value in the table
+    # Use lt to find the maximum value less than lt
+    max_val = 0
+    max_coord = (0, 0)
+    for i, row in enumerate(table):
+        for j, val in enumerate(row):
+            if val > max_val and val < lt:
+                max_val = val
+                max_coord = (i, j)
+    return max_coord
+
+
 def differential_characteristic_path(
     diff_table: list[list[int]], p: Block, rounds: int
-) -> tuple[list[list[tuple[int, int]]], float]:
+) -> tuple[list[list[tuple[int, int]]], Block, float]:
     """
     Finds the best diffierential characteristic path for a given plaintext
     difference block p (\Delta P).
@@ -330,7 +359,7 @@ def differential_characteristic_path(
             output_nibble = best_diffs[input_nibble][1]
             path_matrix[round].append((input_nibble, output_nibble))
             newCur.append(output_nibble)
-            if input_nibble != 0 and output_nibble != 0:
+            if input_nibble != 0 or output_nibble != 0:
                 # Update the probability of the path
                 result_probability *= diff_table[input_nibble][output_nibble] / 16
 
@@ -338,52 +367,66 @@ def differential_characteristic_path(
         cur = Block(tuple(newCur))
         cur = permute_block(cur)
 
-    return path_matrix, result_probability
+    # Do a final encryption on the cur block to get the inputs to the last round
+    last_round_inputs = cur
+
+    return path_matrix, last_round_inputs, result_probability
 
 
 def best_differential_characteristic(
     diff_table: list[list[int]],
     rounds: int,
-    plaintexts: list[Block],
-    cyphertexts: list[Block],
+    delta_ps: list[Block] | None = None,
+    plaintexts: list[Block] | None = None,
+    cyphertexts: list[Block] | None = None,
     epsilon: float = 0.0005,
-) -> tuple[Block, Block, Block, list[list[tuple[int, int]]], float] | None:
+) -> tuple[Block, Block, list[list[tuple[int, int]]], float] | None:
     """
-    Find the best differential characteristic for the given SBox and number of
-    rounds for which a good pair exists. Returns a tuple, where the tuple is an
-    input diff block, an input diff to the final round, an overall output diff
-    block, a matrix of tuples representing the path, and the probability of the
-    characteristic.
+    Find the best differential characteristic for the given difference
+    distribution table and number of rounds. If plaintexts and cyphertexts are
+    provided, only consider characteristics that have a good pair in the
+    plaintexts and cyphertexts.
+    Returns a tuple, where the tuple is an input diff block, an input diff to
+    the final round, an overall output diff block, a matrix of tuples
+    representing the path, and the probability of the characteristic.
     """
     count = 0
     total = 16**4
     best_probability = 0
     best_ret = None
-    for i in all_possible_blocks():
+    delta_p_to_use = delta_ps if delta_ps is not None else all_possible_blocks()
+    for delta_p in delta_p_to_use:
         count += 1
-        if i == Block((0, 0, 0, 0)):
+        if delta_p == Block((0, 0, 0, 0)):
             continue
-        path, probability = differential_characteristic_path(diff_table, i, rounds)
+        path, input_to_final_round, probability = differential_characteristic_path(
+            diff_table, delta_p, rounds
+        )
         if probability <= epsilon:
             # Dont bother with these, we likely wont find a good pair in the collected plaintexts
             continue
         output_block = Block(tuple([path[-1][i][1] for i in range(4)]))
-        good_pair = find_good_pair(i, output_block, plaintexts, cyphertexts)
-        if good_pair is not None:
-            if probability > best_probability:
-                best_probability = probability
-                final_round_input_diff = Block(
-                    tuple([path[-1][i][0] for i in range(4)])
-                )
-                best_ret = (i, final_round_input_diff, output_block, path, probability)
+        if plaintexts is not None and cyphertexts is not None:
+            good_pair = find_good_pair(delta_p, output_block, plaintexts, cyphertexts)
+            if good_pair is None:
+                continue
+        if probability > best_probability:
+            best_probability = probability
+            best_ret = (
+                delta_p,
+                input_to_final_round,
+                path,
+                probability,
+            )
     return best_ret
 
 
 def pretty_string_diff_characteristic_path(path: list[list[tuple[int, int]]]) -> str:
     s = ""
+    rows = []
     for row in path:
-        s += "  ".join([f"{hex(i[0])[2:]}->{hex(i[1])[2:]}" for i in row]) + "\n"
-    return s
+        rows.append("  ".join([f"{hex(i[0])[2:]}->{hex(i[1])[2:]}" for i in row]))
+    return "\n".join(rows)
 
 
 def all_possible_blocks() -> Iterator[Block]:
@@ -421,28 +464,73 @@ def find_good_pair(
     plaintext_dict = {p: c for p, c in zip(plaintexts, cyphertexts)}
 
     for i, (p0, c0) in enumerate(plaintext_dict.items()):
-        p1_expected = p0 ^ input_diff
-        if p1_expected in plaintext_dict:
-            c1 = plaintext_dict[p1_expected]
+        p1 = p0 ^ input_diff
+        if p1 in plaintext_dict:
+            c1 = plaintext_dict[p1]
             if c0 ^ c1 == expected_out:
-                return (p0, c0), (p1_expected, c1)
+                return (p0, c0), (p1, c1)
 
 
 def find_all_good_pairs(
     input_diff: Block,
-    expected_out: Block,
+    expected_out_diff: Block,
     plaintexts: list[Block],
     cyphertexts: list[Block],
 ) -> list[tuple[tuple[Block, Block], tuple[Block, Block]]]:
-    # Find a pair of plaintexts that have the given input difference and output
-    # difference when encrypted
-
+    # Find all pair of plaintexts that have the given input difference and
+    # output difference when encrypted
     plaintext_dict = {p: c for p, c in zip(plaintexts, cyphertexts)}
-    results = []
+    good_pairs = []
     for i, (p0, c0) in enumerate(plaintext_dict.items()):
-        p1_expected = p0 ^ input_diff
-        if p1_expected in plaintext_dict:
-            c1 = plaintext_dict[p1_expected]
-            if c0 ^ c1 == expected_out:
-                results.append(((p0, c0), (p1_expected, c1)))
-    return results
+        p1 = p0 ^ input_diff
+        if p1 in plaintext_dict:
+            c1 = plaintext_dict[p1]
+            # print(f"Checking {p0} -> {c0} and {p1} -> {c1}")
+            # print(f"Expected out diff: {expected_out_diff}")
+            # print(f"Actual out diff:   {c0 ^ c1}")
+            if c0 ^ c1 == expected_out_diff:
+                good_pairs.append(((p0, c0), (p1, c1)))
+    return good_pairs
+
+
+def find_pairs_with_diff(
+    diff: Block,
+    plaintexts: list[Block],
+    cyphertexts: list[Block],
+) -> list[tuple[tuple[Block, Block], tuple[Block, Block]]]:
+    # Find all pairs of plaintexts that have the given difference
+    plaintext_dict = {p: c for p, c in zip(plaintexts, cyphertexts)}
+    good_pairs = []
+    for i, (p0, c0) in enumerate(plaintext_dict.items()):
+        p1 = p0 ^ diff
+        if p1 in plaintext_dict:
+            c1 = plaintext_dict[p1]
+            good_pairs.append(((p0, c0), (p1, c1)))
+    return good_pairs
+
+
+def output_boxes_affected(final_round_input: Block) -> list[bool]:
+    # Find which sboxes are affected in the last round of the path
+    l = []
+    for i in range(4):
+        l.append(final_round_input.block[i] != 0)
+    return l
+
+
+def generate_partial_subkeys(
+    box_one: bool, box_two: bool, box_three: bool, box_four: bool
+) -> list[Block]:
+    """Generates all the partial subkeys that affect the given sboxes.
+    There is definitely a faster way to do this
+    """
+    psk_set = set()
+    for i in range(16):
+        i_num = i if box_one else 0
+        for j in range(16):
+            j_num = j if box_two else 0
+            for k in range(16):
+                k_num = k if box_three else 0
+                for l in range(16):
+                    l_num = l if box_four else 0
+                    psk_set.add(Block((i_num, j_num, k_num, l_num)))
+    return list(psk_set)
