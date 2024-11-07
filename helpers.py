@@ -299,7 +299,11 @@ def pretty_string_diff_table(diff_table: list[list[int]]) -> str:
     # Pretty string for the difference distribution table
     s = ""
     for row in diff_table:
-        s += " ".join([hex(i)[2:] for i in row]) + "\n"
+        l = []
+        for i in row:
+            hex_char = hex(i)[2:]
+            l.append(f"{hex_char.rjust(2)}")
+        s += " ".join(l) + "\n"
     return s
 
 
@@ -335,11 +339,13 @@ def differential_characteristic_path(
 ) -> tuple[list[list[tuple[int, int]]], Block, float]:
     """
     Finds the best diffierential characteristic path for a given plaintext
-    difference block p (\Delta P).
+    difference block p (\Delta P). Rounds is the number of rounds to consider,
+    aka the amount of rounds in the SPN subtract one.
 
     Returns a 2d list of tuples, where each tuple is a pair of input and output
     differences for a round. As in, the top left tuple in the matrix is the
-    input and output differences for the first sbox in the first round
+    input and output differences for the first sbox in the first round. Also
+    returns the input to the final round and the probability of the path.
     """
 
     # Find the best output difference for each input difference
@@ -380,8 +386,8 @@ def best_differential_characteristic(
     plaintexts: list[Block] | None = None,
     cyphertexts: list[Block] | None = None,
     affected_outputs: list[bool] | None = None,
-    affected_count: int = 2,
-    epsilon: float = 0.0005,
+    affected_count: int | None = None,
+    epsilon: float | None = None,
 ) -> tuple[Block, Block, list[list[tuple[int, int]]], float] | None:
     """
     Find the best differential characteristic for the given difference
@@ -407,7 +413,7 @@ def best_differential_characteristic(
         path, input_to_final_round, probability = differential_characteristic_path(
             diff_table, delta_p, rounds
         )
-        if probability <= epsilon:
+        if epsilon is not None and probability <= epsilon:
             # Dont bother with these, we likely wont find a good pair in the collected plaintexts
             continue
         output_block = Block(tuple([path[-1][i][1] for i in range(4)]))

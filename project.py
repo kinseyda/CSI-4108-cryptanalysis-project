@@ -56,10 +56,11 @@ bs = best_differential_characteristic(
     diff_table,
     3,
 )
+
 bdps = best_differential_characteristic(
     diff_table,
     3,
-    best_delta_ps,
+    delta_ps=best_delta_ps,
 )
 
 bac = best_differential_characteristic(
@@ -133,7 +134,7 @@ def find_last_key_byte(
         print(
             "No characteristic with a good pair in the plaintexts / cyphertexts found."
         )
-        return None
+        return Block((0, 0, 0, 0))
 
     (
         best_input_diff,
