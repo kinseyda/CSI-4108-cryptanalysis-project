@@ -296,7 +296,7 @@ def difference_distribution_table(sbox: SBox) -> list[list[int]]:
 
 
 def pretty_string_diff_table(diff_table: list[list[int]]) -> str:
-    # Pretty print the difference distribution table
+    # Pretty string for the difference distribution table
     s = ""
     for row in diff_table:
         s += " ".join([hex(i)[2:] for i in row]) + "\n"
@@ -379,16 +379,21 @@ def best_differential_characteristic(
     delta_ps: list[Block] | None = None,
     plaintexts: list[Block] | None = None,
     cyphertexts: list[Block] | None = None,
+    affected_outputs: list[bool] | None = None,
+    affected_count: int = 2,
     epsilon: float = 0.0005,
 ) -> tuple[Block, Block, list[list[tuple[int, int]]], float] | None:
     """
     Find the best differential characteristic for the given difference
     distribution table and number of rounds. If plaintexts and cyphertexts are
     provided, only consider characteristics that have a good pair in the
-    plaintexts and cyphertexts.
-    Returns a tuple, where the tuple is an input diff block, an input diff to
-    the final round, an overall output diff block, a matrix of tuples
-    representing the path, and the probability of the characteristic.
+    plaintexts and cyphertexts. If affected_outputs is provided, only consider
+    characteristics that affect the given sboxes in the last round. If
+    affected_count is provided, only consider characteristics that affect at
+    least that many sboxes in the last round. If epsilon is provided, only
+    consider characteristics with a probability greater than epsilon.
+    Returns a tuple, where the tuple is the best input difference, the final
+    round input difference, the path matrix, and the probability of the path.
     """
     count = 0
     total = 16**4
@@ -409,6 +414,18 @@ def best_differential_characteristic(
         if plaintexts is not None and cyphertexts is not None:
             good_pair = find_good_pair(delta_p, output_block, plaintexts, cyphertexts)
             if good_pair is None:
+                continue
+        output_boxes_affected_in_path = output_boxes_affected(input_to_final_round)
+        if affected_outputs is not None:
+            if not (
+                (output_boxes_affected_in_path[0] and affected_outputs[0])
+                or (output_boxes_affected_in_path[1] and affected_outputs[1])
+                or (output_boxes_affected_in_path[2] and affected_outputs[2])
+                or (output_boxes_affected_in_path[3] and affected_outputs[3])
+            ):
+                continue
+        if affected_count is not None:
+            if sum(output_boxes_affected_in_path) < affected_count:
                 continue
         if probability > best_probability:
             best_probability = probability
@@ -485,9 +502,6 @@ def find_all_good_pairs(
         p1 = p0 ^ input_diff
         if p1 in plaintext_dict:
             c1 = plaintext_dict[p1]
-            # print(f"Checking {p0} -> {c0} and {p1} -> {c1}")
-            # print(f"Expected out diff: {expected_out_diff}")
-            # print(f"Actual out diff:   {c0 ^ c1}")
             if c0 ^ c1 == expected_out_diff:
                 good_pairs.append(((p0, c0), (p1, c1)))
     return good_pairs
@@ -534,3 +548,35 @@ def generate_partial_subkeys(
                     l_num = l if box_four else 0
                     psk_set.add(Block((i_num, j_num, k_num, l_num)))
     return list(psk_set)
+
+
+def side_by_side(strings: list[str], size: int = 20, space: int = 2) -> str:
+    strings = list(strings)
+    result = []
+
+    while any(strings):
+        line = []
+
+        for i, s in enumerate(strings):
+            buf = s[:size]
+
+            try:
+                n = buf.index("\n")
+                line.append(buf[:n].ljust(size))
+                strings[i] = s[n + 1 :]
+            except ValueError:
+                line.append(buf.ljust(size))
+                strings[i] = s[size:]
+
+        result.append((" " * space).join(line))
+
+    return "\n".join(result)
+
+
+def characteristic_string(
+    title: str, c: tuple[Block, Block, list[list[tuple[int, int]]], float] | None
+):
+    if c is None:
+        return f"{title}:\nNo characteristic found."
+    best_input_diff, best_input_diff_final_round, best_path_matrix, best_probability = c
+    return f"{title}:\nProbability: {best_probability:.2%}\nBest input difference: {best_input_diff}\nFinal round input difference: {best_input_diff_final_round}\n{pretty_string_diff_characteristic_path(best_path_matrix)}"
