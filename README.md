@@ -1,1 +1,3 @@
-Currently the java code is for the S-box from the Hayes paper (0 goes to E, 1 goes to 4, etc...)
+# CSI4108 / SEC5101
+
+This program is used to do Differential Cryptanalysis on a SPN implementation and will discover one byte of the final key
