@@ -1,4 +1,5 @@
 from helpers import *
+import alive_progress
 
 # This is the project file for the cryptanalysis project, which has some helper
 # functions and classes for the project. Any files beginning with "secret" will
@@ -85,13 +86,18 @@ print(
 key_1, key_2, key_3, key_4, key_5 = generate_round_keys()
 
 spn = SPN(sbox, (key_1, key_2, key_3, key_4, key_5))
-assert bac is not None
+final_key_char = best_differential_characteristic(
+    diff_table,
+    3,
+    affected_count=2,
+)
+assert final_key_char is not None
 (
     dp,
     best_output_diff_final_round,
     best_path,
     best_probability,
-) = bac  # Using the best characteristic with 2 affected sboxes, to ensure that a whole byte can be found
+) = final_key_char  # Using the best characteristic with 2 affected sboxes, to ensure that a whole byte can be found
 
 plaintext = generate_diffed_plaintexts(dp)
 ciphertext = spn.encrypt(plaintext)
@@ -103,8 +109,8 @@ write_secret_file("ciphertexts.txt", "\n".join([str(c) for c in ciphertext]))
 
 # ------------------------------------------------------------------------------ Differential cryptanalysis
 
-analysis_plaintext = load_blocks("analysis_plaintexts.txt")
-analysis_cyphertext = load_blocks("analysis_ciphertexts.txt")
+analysis_plaintext = load_blocks("secret_plaintexts.txt")
+analysis_cyphertext = load_blocks("secret_ciphertexts.txt")
 
 
 def find_last_key_byte(
@@ -154,19 +160,21 @@ def find_last_key_byte(
     print("- Computing subkey probabilities...")
     subkey_probabilities: dict[Block, int] = {}
     total = 0
-    for (p0, c0), (p1, c1) in find_pairs_with_diff(
-        best_input_diff, plaintexts, cyphertexts
-    ):
-        for subkey in subkeys_to_try:
-            partial_decrypt0 = Block(tuple(sbox.decrypt_block(c0 ^ subkey)))
-            partial_decrypt1 = Block(tuple(sbox.decrypt_block(c1 ^ subkey)))
-            if partial_decrypt0 ^ partial_decrypt1 == final_round_input_diff:
-                if subkey in subkey_probabilities:
-                    subkey_probabilities[subkey] += 1
-                    total += 1
-                else:
-                    subkey_probabilities[subkey] = 1
-                    total += 1
+    p_pairs = find_pairs_with_diff(best_input_diff, plaintexts, cyphertexts)
+    total_iterations = len(p_pairs) * len(subkeys_to_try)
+    with alive_progress.alive_bar(total_iterations) as bar:
+        for (p0, c0), (p1, c1) in p_pairs:
+            for subkey in subkeys_to_try:
+                partial_decrypt0 = Block(tuple(sbox.decrypt_block(c0 ^ subkey)))
+                partial_decrypt1 = Block(tuple(sbox.decrypt_block(c1 ^ subkey)))
+                if partial_decrypt0 ^ partial_decrypt1 == final_round_input_diff:
+                    if subkey in subkey_probabilities:
+                        subkey_probabilities[subkey] += 1
+                        total += 1
+                    else:
+                        subkey_probabilities[subkey] = 1
+                        total += 1
+                bar()
 
     # Print a table showing the probability of each partial subkey
     print("Top 10 subkey probabilities:")
